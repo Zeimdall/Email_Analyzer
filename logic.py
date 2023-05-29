@@ -1,3 +1,17 @@
+import email
+from email import policy
+import os
+import re
+from tkinter import messagebox
+import traceback
+from utils import check_ip_reputation, exported_path, show_error, show_info
+
+global tb
+tb = traceback.format_exc()
+import extract_msg
+import chardet
+
+
 class logic:
     def __init__(self, gui):
         self.gui = gui

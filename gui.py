@@ -6,8 +6,6 @@ from email import policy
 from tkinter import filedialog, messagebox, ttk
 import os
 
-import chardet
-import extract_msg
 
 from utils import (
     clear_exported_path,
