@@ -1,6 +1,8 @@
 import os
-import messagebox
+from tkinter import messagebox
 import shutil
+
+import ipapi
 
 
 def exported_path():
@@ -23,3 +25,15 @@ def show_warning(message):
 
 def show_error(message):
     messagebox.showerror("Error", message)
+
+
+def check_ip_reputation(ip_address):
+    try:
+        ip_data = ipapi.location(ip_address, output='json')
+        if 'threat' in ip_data:
+            threat_level = ip_data['threat']['is_threat']
+            if threat_level:
+                return "Unsafe IP address"
+        return "Safe IP address"
+    except ipapi.exceptions.PageNotFound:
+        return "IP information not available"

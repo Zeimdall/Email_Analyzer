@@ -9,7 +9,7 @@ import os
 import chardet
 import extract_msg
 
-from utils import clear_exported_path, show_error, show_info, exported_path
+from utils import clear_exported_path, show_error, show_info, exported_path, check_ip_reputation
 
 global tb
 tb = traceback.format_exc()
@@ -20,7 +20,7 @@ class EmailAnalyzerGui:
         self.root = tk.Tk()
         self.root.title("Email Message Verifier")
 
-        self.root.geometry("800x800")
+        self.root.geometry("800x1000")
         self.root.protocol("WM_DELETE_WINDOW", self.on_close)
 
         style = self.create_custom_button_style()
@@ -30,9 +30,9 @@ class EmailAnalyzerGui:
         self.result_text = tk.Text(self.result_label, width=80, height=7, wrap="word")
         self.result_text.pack()
 
-        self.content_label = ttk.LabelFrame(text="Message content", width=80, height=7)
+        self.content_label = ttk.LabelFrame(text="Message content", width=80, height=12)
         self.content_label.pack(pady=10)
-        self.content_text = tk.Text(self.content_label, width=80, height=7, wrap="word")
+        self.content_text = tk.Text(self.content_label, width=80, height=12, wrap="word")
         self.content_text.pack()
 
         middle_frame = tk.Frame(self.root)
@@ -64,10 +64,15 @@ class EmailAnalyzerGui:
         self.ip_text = tk.Text(self.ip_frame, width=38, height=7, wrap="word")
         self.ip_text.pack()
 
+        self.xheaders_label = ttk.LabelFrame(text="X Headers", width=80, height=7)
+        self.xheaders_label.pack(pady=10)
+        self.xheaders_text = tk.Text(self.xheaders_label, width=80, height=7, wrap="word")
+        self.xheaders_text.pack()
+
         button_frame = tk.Frame(self.root)
         button_frame.pack(pady=10)
 
-        browse_btn = ttk.Button(button_frame, text="Choose email file", command=self.browse_file,
+        browse_btn = ttk.Button(button_frame, text="Choose Email File", command=self.browse_file,
                                 style='Custom.TButton')
         browse_btn.pack(side=tk.LEFT, padx=5)
 
@@ -115,7 +120,6 @@ class EmailAnalyzerGui:
                 self.msg_checker(self.email_name)
             except Exception as e:
                 messagebox.showerror("Error", "Something went wrong with msg_checker! " + str(e))
-                print("Coś poszło nie tak z msg_checker!")
                 print(str(e))
         elif self.email_name.endswith('.eml') and not self.email_processed:
             try:
@@ -123,7 +127,6 @@ class EmailAnalyzerGui:
                 self.email_processed = True
             except Exception as e:
                 messagebox.showerror("Error", "Something went wrong with eml_checker! " + str(e))
-                print("Coś poszło nie tak z eml_checker!")
                 print(str(e) + "\n" + tb)
         else:
             messagebox.showerror("Error", "Email file has wrong format.")
@@ -144,20 +147,77 @@ class EmailAnalyzerGui:
                 if isinstance(payload, bytes):
                     encoding = chardet.detect(payload)["encoding"] or "utf-8"
                     payload = payload.decode(encoding)
-                    self.append_text("Message Content:\n" + payload)
+                    self.append_content_message_text(payload)
 
-            for attachment in message.attachments:
-                if hasattr(attachment, "longFilename"):
-                    attachment_name = attachment.longFilename
-                elif hasattr(attachment, "filenameLong"):
-                    attachment_name = attachment.filenameLong
-                else:
-                    attachment_name = "Unknown Filename"
-                self.append_attachment_text(attachment_name)
+                for attachment in message.attachments:
+                    if hasattr(attachment, "longFilename"):
+                        attachment_name = attachment.longFilename
+                    elif hasattr(attachment, "filenameLong"):
+                        attachment_name = attachment.filenameLong
+                    else:
+                        attachment_name = "Unknown Filename"
+                    self.append_attachment_text(attachment_name + "\n")
+
+                body = str(payload).replace('\r', ' ')
+
+                self.msg_ip_grabber(body)
+                self.msg_url_grabber(body)
+                self.msg_email_grabber(body)
+                self.embed_attachments()
 
         except Exception as e:
             show_error("Something went wrong verifying .msg file!")
             print(str(e) + "\n" + tb)
+            traceback.print_exc()
+
+    def msg_ip_grabber(self, body_well):
+
+        IP = []
+        IP_COUNT = 0
+        regex = re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', body_well)
+
+        try:
+            if regex is not None:
+                for match in regex:
+                    if match not in IP:
+                        IP.append(match)
+                        IP_COUNT += 1
+                        self.append_ip_text("\n" + str(IP_COUNT) + " - IP Address: " + match)
+        except:
+            print("Something Goes Wrong In Grabbing MSG IPs")
+
+    def msg_email_grabber(self, email_body):
+
+        EMAIL = []
+        regex = re.findall(r'[\w\.-]+@[\w\.-]+', email_body)
+
+        try:
+            if regex is not None:
+                for match in regex:
+                    if match not in EMAIL:
+                        EMAIL.append(match)
+                        self.append_email_addresses_text(match)
+            print("\n")
+        except Exception as e:
+            print("Something went wrong in grabbing MSG emails")
+            print(str(e) + "\n" + tb)
+            traceback.print_exc()
+
+    def msg_url_grabber(self, url_file):
+
+        try:
+            regex = re.findall(r'(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9][a-z0-9-]{0,61}[a-z0-9]', url_file)
+            if regex is not None:
+                for match in regex:
+                    urlFound = str(match)
+                    urlFound = re.sub("[(\']", "", urlFound)
+                    urlFound = re.sub(">", "", urlFound)
+                    urlFound = re.sub("<", "", urlFound)
+                    self.append_url(urlFound.strip())
+        except Exception as e:
+            print("Something went wrong in MSG URL")
+            print(str(e) + "\n" + tb)
+            traceback.print_exc()
 
     def eml_checker(self, file):
         try:
@@ -187,16 +247,122 @@ class EmailAnalyzerGui:
                     if part.get("Content-Disposition"):
                         attachment_name = part.get_filename()
                         if attachment_name:
-                            self.append_attachment_text(attachment_name)
+                            self.append_attachment_text(attachment_name + "\n")
 
                 self.ip_grabber()
                 self.email_grabber()
                 self.url_grabber()
+                self.xHunter()
                 self.embed_attachments()
 
         except Exception as e:
             messagebox.showerror("Error", "Something went wrong verifying .eml file!")
             print(str(e) + "\n" + tb)
+            traceback.print_exc()
+
+    def email_grabber(self):
+        email = []
+        try:
+            file_open = open(self.email_name, 'r', encoding='utf-8')
+            read_text = file_open.read()
+            regex = re.findall(r'\b[A-Za-z0-9._%+-]{1,20}@[^=]+?\.[A-Za-z]{2,6}\b', read_text)
+            if regex is not None:
+                for match in regex:
+                    if match not in email:
+                        email.append(match)
+                        self.append_email_addresses_text(match + "\n")
+
+        except Exception as e:
+            show_error("Something went wrong in email grabber!")
+            print(str(e) + "\n" + tb)
+            traceback.print_exc()
+            exit()
+
+    def ip_grabber(self):
+        ip = []
+        ip_count = 0
+        try:
+            file_open = open(self.email_name, 'r', encoding='utf-8')
+            read_text = file_open.read()
+            regex = re.findall(r'(?!.)\b(?:\d{1,3}\.){3}\d{1,3}\b', read_text)
+            if regex is not None:
+                for match in regex:
+                    if match not in ip:
+                        ip.append(match)
+                        ip_count += 1
+                        self.append_ip_text(match + " - " + check_ip_reputation(match) + "\n")
+
+        except Exception as e:
+            show_error("Something went wrong IP Grabber!")
+            print(str(e) + "\n" + tb)
+            traceback.print_exc()
+            exit()
+
+    def url_grabber(self):
+        file_open = open(self.email_name, 'r', encoding='utf-8')
+        read_text = file_open.read()
+        url = []
+
+        regex = re.findall(r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+",
+                           read_text)
+
+        try:
+            if regex is not None:
+                for match in regex:
+                    if match not in url:
+                        self.append_url(match)
+                        url.append(match)
+            if not url:
+                show_info("No URLs Found!")
+        except Exception as e:
+            show_error("Something went wrong in url Grabber")
+            print(str(e) + "\n" + tb)
+            traceback.print_exc()
+
+    def xHunter(self):
+        print("\n")
+        try:
+            with open(self.email_name, 'r', encoding='utf-8') as sample:
+                for line in sample:
+                    if line.startswith("X-"):
+                        self.append_xheader_text(line)
+        except Exception as e:
+            show_info("No X Headers observed")
+            print(str(e) + "\n" + tb)
+            traceback.print_exc()
+
+    @staticmethod
+    def verify_attachment_extension(attachment_name):
+        unsafe_extensions = ['exe', 'js', 'vbs', 'bat']
+        filename, file_extension = os.path.splitext(attachment_name)
+
+        if '.' in filename and file_extension.lstrip('.').lower() in unsafe_extensions:
+            return False, "Attachment has unsafe and double extension."
+        elif '.' in filename:
+            return False, "Attachment has double extension."
+        elif file_extension.lstrip('.').lower() in unsafe_extensions:
+            return False, "Attachment has unsafe extension."
+        else:
+            return True, ""
+
+    def embed_attachments(self):
+        try:
+            with open(self.email_name, "r", encoding='utf-8') as f:
+                attach_file = email.message_from_file(f, policy=policy.default)
+                for attachment in attach_file.iter_attachments():
+                    att_name = attachment.get_filename()
+                    valid, message = self.verify_attachment_extension(att_name)
+                    if valid:
+                        show_info("File Found & Written In Attachments: " + att_name)
+                        with open(os.path.join(exported_path(), att_name), "wb") as fileWrite:
+                            fileWrite.write(attachment.get_payload(decode=True))
+                    else:
+                        show_error("Attachment " + att_name + " could not be written in Attachments. " + message)
+
+        except Exception as e:
+            show_error("Something went wrong in embed attachments")
+            print(str(e) + "\n" + tb)
+            traceback.print_exc()
 
     def append_url(self, urls):
         urls_info = "".join(urls) + "\n"
@@ -217,90 +383,8 @@ class EmailAnalyzerGui:
     def append_ip_text(self, text):
         self.ip_text.insert(tk.END, text)
 
-    def email_grabber(self):
-        email = []
-        try:
-            file_open = open(self.email_name, 'r', encoding='utf-8')
-            read_text = file_open.read()
-            regex = re.findall(r'[^@ \t\r\n]+@[^@ \t\r\n]+\.[^@ \t\r\n]+', read_text)
-            if regex is not None:
-                for match in regex:
-                    if match not in email:
-                        email.append(match)
-                        self.append_email_addresses_text(match + "\n")
-
-        except Exception as e:
-            show_error("Something went wrong in email grabber!")
-            print(str(e) + "\n" + tb)
-            exit()
-
-    def ip_grabber(self):
-        ip = []
-        ip_count = 0
-        try:
-            file_open = open(self.email_name, 'r', encoding='utf-8')
-            read_text = file_open.read()
-            regex = re.findall(r'\b(?:\d{1,3}\.){3}\d{1,3}\b', read_text)
-            if regex is not None:
-                for match in regex:
-                    if match not in ip:
-                        ip.append(match)
-                        ip_count += 1
-                        self.append_ip_text(match + "\n")
-
-        except Exception as e:
-            show_error("Something went wrong IP Grabber!")
-            print(str(e) + "\n" + tb)
-            exit()
-
-    def url_grabber(self):
-        file_open = open(self.email_name, 'r', encoding='utf-8')
-        read_text = file_open.read()
-        print(re.search(
-            r"(?P<url>https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()!@:%_\+.~#?&\/\/=]*))",
-            read_text))
-        url = []
-
-        regex = re.findall(r"(?P<url>https?:\/\/(www\.)?[-a-zA-Z0-9@:%._\+~#=]{1,256}\.[a-zA-Z0-9()]{1,6}\b([-a-zA-Z0-9()!@:%_\+.~#?&\/\/=]*))", read_text)
-
-        try:
-            if regex is not None:
-                for match in regex:
-                    if match not in url:
-                        self.append_url(match)
-                        url.append(match)
-            if not url:
-                show_info("No URLs Found!")
-        except Exception as e:
-            show_error("Something went wrong in url Grabber")
-            print(str(e) + "\n" + tb)
-
-    def xHunter(self):
-        print("\n")
-        try:
-            with open(self.email_name, 'r', encoding='utf-8') as sample:
-                for line in sample:
-                    if line.startswith("X-"):
-                        self.append_text(line)
-        except Exception as e:
-            show_info("No X Headers observed")
-            print(str(e) + "\n" + tb)
-
-    def embed_attachments(self):
-        show_info("Checking if there are any attachments")
-
-        try:
-            with open(self.email_name, "r") as f:
-                attach_file = email.message_from_file(f, policy=policy.default)
-                for attachment in attach_file.iter_attachments():
-                    att_name = attachment.get_filename()
-                    show_info("\nFile Found & Written In Attachments: " + att_name)
-                    with open(os.path.join(exported_path(), att_name), "wb") as fileWrite:
-                        fileWrite.write(attachment.get_payload(decode=True))
-
-        except Exception as e:
-            show_error("Something went wrong in embed attachments")
-            print(str(e) + "\n" + tb)
+    def append_xheader_text(self, text):
+        self.xheaders_text.insert(tk.END, text)
 
     def clear_text(self):
         self.result_text.delete(1.0, tk.END)
@@ -308,6 +392,8 @@ class EmailAnalyzerGui:
         self.url_text.delete(1.0, tk.END)
         self.content_text.delete(1.0, tk.END)
         self.ip_text.delete(1.0, tk.END)
+        self.emails_text.delete(1.0, tk.END)
+        self.xheaders_text.delete(1.0, tk.END)
 
     def on_close(self):
         if messagebox.askokcancel("Quit", "Do you want to quit application?"):
