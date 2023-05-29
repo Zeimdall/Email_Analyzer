@@ -1,6 +1,6 @@
 class logic:
     def __init__(self, gui):
-        self.gui.gui = gui
+        self.gui = gui
 
     def file_verifier(self):
         try:
