@@ -2,14 +2,15 @@ import traceback
 import email
 import re
 import tkinter as tk
-from email import policy
+from email.header import decode_header
 from tkinter import filedialog, messagebox, ttk
 import os
-
 import chardet
 import extract_msg
+from email import policy
 
-from utils import clear_exported_path, show_error, show_info, exported_path, check_ip_reputation
+import utils
+from utils import clear_exported_path, show_error, show_info, exported_path, check_ip_reputation, check_ip
 
 global tb
 tb = traceback.format_exc()
@@ -130,6 +131,7 @@ class EmailAnalyzerGui:
                 print(str(e) + "\n" + tb)
         else:
             messagebox.showerror("Error", "Email file has wrong format.")
+            print(traceback.print_exc())
 
     def msg_checker(self, file):
         try:
@@ -163,7 +165,8 @@ class EmailAnalyzerGui:
                 self.msg_ip_grabber(body)
                 self.msg_url_grabber(body)
                 self.msg_email_grabber(body)
-                self.embed_attachments()
+                self.msg_embed_attachments(self.email_name)
+                self.x_hunter()
 
         except Exception as e:
             show_error("Something went wrong verifying .msg file!")
@@ -219,6 +222,31 @@ class EmailAnalyzerGui:
             print(str(e) + "\n" + tb)
             traceback.print_exc()
 
+    def msg_embed_attachments(self, email_file):
+        try:
+            with open(email_file, "rb") as msg_file:
+                message = extract_msg.Message(msg_file)
+                for attachment in message.attachments:
+                    if hasattr(attachment, "longFilename"):
+                        attachment_name = attachment.longFilename
+                    elif hasattr(attachment, "filenameLong"):
+                        attachment_name = attachment.filenameLong
+                    else:
+                        attachment_name = "Unknown Filename"
+
+                    valid, message = self.verify_attachment_extension(attachment_name)
+                    if valid:
+                        show_info("File Found & Written In Attachments: " + attachment_name)
+                        with open(os.path.join(exported_path(), attachment_name), "wb") as fileWrite:
+                            fileWrite.write(attachment.data)
+                    else:
+                        show_error("Attachment " + attachment_name + " could not be written in Attachments. " + message)
+
+        except Exception as e:
+            show_error("Something went wrong in embed attachments")
+            print(str(e))
+            traceback.print_exc()
+
     def eml_checker(self, file):
         try:
             with open(file, 'rb') as eml_file:
@@ -247,12 +275,16 @@ class EmailAnalyzerGui:
                     if part.get("Content-Disposition"):
                         attachment_name = part.get_filename()
                         if attachment_name:
-                            self.append_attachment_text(attachment_name + "\n")
+                            if re.match(r'=\?utf-8\?B\?.+\?=', attachment_name):
+                                decoded_name = decode_header(attachment_name)[0][0].decode('utf-8')
+                                self.append_attachment_text(decoded_name + "\n")
+                            else:
+                                self.append_attachment_text(attachment_name + "\n")
 
                 self.ip_grabber()
                 self.email_grabber()
                 self.url_grabber()
-                self.xHunter()
+                self.x_hunter()
                 self.embed_attachments()
 
         except Exception as e:
@@ -265,7 +297,7 @@ class EmailAnalyzerGui:
         try:
             file_open = open(self.email_name, 'r', encoding='utf-8')
             read_text = file_open.read()
-            regex = re.findall(r'\b[A-Za-z0-9._%+-]{1,20}@[^=]+?\.[A-Za-z]{2,6}\b', read_text)
+            regex = re.findall(r'\b(?![-=+])[A-Za-z0-9._%+-]{1,20}@[^=]+?\.[A-Za-z]{2,6}\b', read_text)
             if regex is not None:
                 for match in regex:
                     if match not in email:
@@ -284,13 +316,17 @@ class EmailAnalyzerGui:
         try:
             file_open = open(self.email_name, 'r', encoding='utf-8')
             read_text = file_open.read()
-            regex = re.findall(r'(?!.)\b(?:\d{1,3}\.){3}\d{1,3}\b', read_text)
+            regex = re.findall(r'\b(?:[0-9]{1,3}\.){3}[0-9]{1,3}\b(?<!\.)', read_text)
             if regex is not None:
                 for match in regex:
                     if match not in ip:
                         ip.append(match)
                         ip_count += 1
                         self.append_ip_text(match + " - " + check_ip_reputation(match) + "\n")
+            if ip not in utils.UNSAFE_IPS:
+                show_info("All IP addresses are safe.")
+            else:
+                show_error("Some of these IP addresses are unsafe!")
 
         except Exception as e:
             show_error("Something went wrong IP Grabber!")
@@ -303,7 +339,7 @@ class EmailAnalyzerGui:
         read_text = file_open.read()
         url = []
 
-        regex = re.findall(r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+",
+        regex = re.findall(r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\,]|(%[0-9a-fA-F][0-9a-fA-F]))+",
                            read_text)
 
         try:
@@ -319,31 +355,23 @@ class EmailAnalyzerGui:
             print(str(e) + "\n" + tb)
             traceback.print_exc()
 
-    def xHunter(self):
-        print("\n")
+    def x_hunter(self):
         try:
-            with open(self.email_name, 'r', encoding='utf-8') as sample:
-                for line in sample:
-                    if line.startswith("X-"):
-                        self.append_xheader_text(line)
+            if self.email_name.endswith('.eml'):
+                with open(self.email_name, 'r', encoding='utf-8') as sample:
+                    for line in sample:
+                        if line.startswith("X-"):
+                            self.append_xheader_text(line)
+            elif self.email_name.endswith('.msg'):
+                with open(self.email_name, 'rb') as sample:
+                    message = extract_msg.Message(sample)
+                    x_headers = message.get_xheaders()
+                    for header in x_headers:
+                        self.append_xheader_text(header)
         except Exception as e:
             show_info("No X Headers observed")
             print(str(e) + "\n" + tb)
             traceback.print_exc()
-
-    @staticmethod
-    def verify_attachment_extension(attachment_name):
-        unsafe_extensions = ['exe', 'js', 'vbs', 'bat']
-        filename, file_extension = os.path.splitext(attachment_name)
-
-        if '.' in filename and file_extension.lstrip('.').lower() in unsafe_extensions:
-            return False, "Attachment has unsafe and double extension."
-        elif '.' in filename:
-            return False, "Attachment has double extension."
-        elif file_extension.lstrip('.').lower() in unsafe_extensions:
-            return False, "Attachment has unsafe extension."
-        else:
-            return True, ""
 
     def embed_attachments(self):
         try:
@@ -394,6 +422,21 @@ class EmailAnalyzerGui:
         self.ip_text.delete(1.0, tk.END)
         self.emails_text.delete(1.0, tk.END)
         self.xheaders_text.delete(1.0, tk.END)
+        self.email_processed = False
+
+    @staticmethod
+    def verify_attachment_extension(attachment_name):
+        unsafe_extensions = ['exe', 'js', 'vbs', 'bat']
+        filename, file_extension = os.path.splitext(attachment_name)
+
+        if '.' in filename and file_extension.lstrip('.').lower() in unsafe_extensions:
+            return False, "Attachment has unsafe and double extension."
+        elif '.' in filename:
+            return False, "Attachment has double extension."
+        elif file_extension.lstrip('.').lower() in unsafe_extensions:
+            return False, "Attachment has unsafe extension."
+        else:
+            return True, ""
 
     def on_close(self):
         if messagebox.askokcancel("Quit", "Do you want to quit application?"):
